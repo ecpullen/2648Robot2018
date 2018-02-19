@@ -11,14 +11,18 @@ import com.ctre.phoenix.motorcontrol.can.WPI_TalonSRX;
 
 import edu.wpi.first.wpilibj.ADXRS450_Gyro;
 import edu.wpi.first.wpilibj.Compressor;
+import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
 import edu.wpi.first.wpilibj.DoubleSolenoid.Value;
 import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.GenericHID.Hand;
 import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.Joystick;
+import edu.wpi.first.wpilibj.PIDController;
+import edu.wpi.first.wpilibj.PIDOutput;
 import edu.wpi.first.wpilibj.SpeedControllerGroup;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.interfaces.Gyro;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 
@@ -46,16 +50,17 @@ public class Robot extends IterativeRobot {
 	private Encoder e; //elevater encoder
 	private ADXRS450_Gyro gyro;//gyro
 	private double pSpeed = 0;
-	
+	private WPI_TalonSRX elefttop, eleftbot, erighttop, erightbot;
+	private SpeedControllerGroup elevatorLeft, elevatorRight;
+	private WPI_TalonSRX cleft,cright;
+	private DigitalInput hallEffect;
+	private PIDController drive,turn;
 	/**
 	 * This function is run when the robot is first started up and should be
 	 * used for any initialization code.
 	 */
 	@Override
 	public void robotInit() {
-		m_chooser.addDefault("Default Auto", kDefaultAuto);
-		m_chooser.addObject("My Auto", kCustomAuto);
-		SmartDashboard.putData("Auto choices", m_chooser);
 		
 		fleft = new WPI_TalonSRX (60);
 		rleft = new WPI_TalonSRX (11);
@@ -75,11 +80,31 @@ public class Robot extends IterativeRobot {
 		
 		left = new Encoder (2,3);
 		right = new Encoder (0,1);//creates encoders
-		left.setDistancePerPulse(1);
-		right.setDistancePerPulse(1);//setting the encoders pulse distance
+		left.setDistancePerPulse(4*Math.PI/128);
+		right.setDistancePerPulse(4*Math.PI/128);//setting the encoders pulse distance
 		comp.start();//starts compressor
-		e = new Encoder (4,5);//adds elevater encoder
+		e = new Encoder (8,9);//adds elevator encoder
 		gyro = new ADXRS450_Gyro();//adds gyro
+		
+		elefttop = new WPI_TalonSRX(27);
+		eleftbot = new WPI_TalonSRX(56); 
+		erighttop = new WPI_TalonSRX(8);
+		erightbot = new WPI_TalonSRX(2);
+		
+		cleft = new WPI_TalonSRX(59); 
+		cright = new WPI_TalonSRX(12);
+		
+		hallEffect = new DigitalInput(4);
+		
+		drive = new PIDController(.45,.00,.001,left,new OutputDrive(rd, gyro));
+		turn = new PIDController(.1,.00000,0,gyro,new OutputTurn(rd));
+		
+		//elevatorLeft = new SpeedControllerGroup(elefttop, eleftbot);
+		//elevatorRight = new SpeedControllerGroup(erightbot, erighttop);
+		
+		SmartDashboard.putData("Left Encoder",left);
+		SmartDashboard.putData("Right Encoder",right);//gives Data to the smart dash board
+		SmartDashboard.putData("Elevator",e);
 	}
 
 	/**
@@ -95,27 +120,79 @@ public class Robot extends IterativeRobot {
 	 */
 	@Override
 	public void autonomousInit() {
-		m_autoSelected = m_chooser.getSelected();
+		//m_autoSelected = m_chooser.getSelected();
 		// autoSelected = SmartDashboard.getString("Auto Selector",
 		// defaultAuto);
 		left.reset();
 		right.reset();
 		gyro.reset();//resets the gyro and the encoders
-		System.out.println("Auto selected: " + m_autoSelected);
+		//System.out.println("Auto selected: " + m_autoSelected);
+		drive.setSetpoint(60);
+		drive.setPercentTolerance(5);
+		drive.setOutputRange(-.75, .75);
+		drive.enable();
+		turn.setSetpoint(90);
+		turn.setPercentTolerance(2);
+		turn.setOutputRange(-.75, .75);
+		//turn.enable();
 	}
 
 	/**
 	 * This function is called periodically during autonomous.
 	 */
+	int c = 0;
 	@Override
 	public void autonomousPeriodic() {
-		if(left.getDistance()<60) {
-			double term = gyro.getAngle();//tells us how far off we are from the path
-			rd.arcadeDrive(.5, 0);
-			
+		System.out.println(gyro.getAngle());
+		//System.out.println();
+		if(c == 0 && drive.isEnabled() && drive.getError()<2) {
+			System.out.println("1");
+			drive.disable();
+			turn.enable();
+			c++;
 		}
+		if(c == 1 && turn.isEnabled() && turn.getError()<5) {
+			System.out.println("2");
+			turn.disable();
+			left.reset();
+			drive.reset();
+			drive.setSetpoint(60);
+			drive.enable();
+			c++;
+		}
+		if(c == 2 && drive.isEnabled() && drive.getError()<5) {
+			System.out.println("3");
+			drive.disable();
+			turn.reset();
+			turn.setSetpoint(-90);
+			turn.enable();
+			c++;
+		}
+		if(c == 3 && turn.isEnabled() && turn.getError()<5) {
+			System.out.println(4);
+			turn.disable();
+			left.reset();
+			drive.reset();
+			drive.setSetpoint(60);
+			drive.enable();
+			c++;
+		}
+		if(c == 4 && drive.isEnabled() && drive.getError()<5) {
+			System.out.println("3");
+			drive.disable();
+			cleft.set(-1);
+			cright.set(1);
+		}
+		
+		System.out.println("c " + c);
+		
 	}
-
+	@Override
+	public void  disabledInit() {
+		super.disabledInit();
+		drive.disable();
+		c = 0;
+	}
 	/**
 	 * This function is called periodically during operator control.
 	 */
@@ -126,16 +203,22 @@ public class Robot extends IterativeRobot {
 		if (js2.getRawButton(6)) {//if button 6 is pressed the intake pulles in, 7 is pressed intake pushes out
 			ileft.set(1);
 			iright.set(-1);
+			cleft.set(-1);
+			cright.set(1);
 		}
-		else if (js2.getRawButton(7)) {
+		else if (js2.getRawButton(5)) {
 			ileft.set(-1);
 			iright.set(1);
+			cleft.set(1);
+			cright.set(-1);
 		}
-		else {//if button 6 or 7 is not pressed the intake is at nuetral
+		else {//if button 6 or 7 is not pressed the intake is at neutral
 			ileft.set(0);
 			iright.set(0);
+			cleft.set(0);
+			cright.set(0);
 		}
-		if (js2.getRawButton(0)) {//if button 0 is pressed intake numatics push out,if button 1 is pressed intake numatics pull in
+		if (js2.getRawButton(2)) {//if button 0 is pressed intake numatics push out,if button 1 is pressed intake numatics pull in
 			it.set(Value.kForward);
 		}
 		if (js2.getRawButton(1)) {
@@ -144,13 +227,26 @@ public class Robot extends IterativeRobot {
 		if (js1.getRawButton(3)) {//toggles drive train when button 3 is pressed
 			dt.set(Value.kForward);
 		}
-		if (js1.getRawButton(2)) {
+		if (js1.getRawButton(4)) {
 			dt.set(Value.kReverse);
 		}
-		System.out.println(left.getDistance());
-		System.out.println(right.getDistance());//gives encoder vaulues to drivers station
-		SmartDashboard.putData(left);
-		SmartDashboard.putData(right);//gives Data to the smart dash board
+		//System.out.println(left.getRate());
+		//System.out.println(right.getRate());//gives encoder vaulues to drivers station
+		/*if(Math.abs(left.getRate())<60) {
+			//if(dt.get().equals(Value.kForward)) {
+				dt.set(Value.kReverse);
+			System.out.println("Shift");
+		}
+		if(Math.abs(left.getRate()) > 70) {
+			if(dt.get().equals(Value.kReverse))
+				dt.set(Value.kForward);
+			System.out.println("Shift down");
+		}*/
+		System.out.println(left.getRate());
+		//System.out.println(hallEffect.get());
+		//if(js2.getRawButton(7))
+			//e.reset();
+		elevate(js2.getRawAxis(5));
 	}
 
 	/** 
@@ -191,5 +287,44 @@ public class Robot extends IterativeRobot {
 				pSpeed = 0;
 			rd.arcadeDrive(pSpeed, js1.getX(Hand.kRight)*.75);
 		}
+	}
+	public void elevate(double output) {
+		elefttop.set(-output);
+		eleftbot.set(output);
+		erighttop.set(-output);
+		erightbot.set(-output); 
+	}
+	private class OutputDrive implements PIDOutput{
+
+		private DifferentialDrive rd;
+		private Gyro gyro;
+		
+		public OutputDrive(DifferentialDrive rd, Gyro gyro) {
+			this.rd = rd;
+			this.gyro = gyro;
+		}
+		
+		@Override
+		public void pidWrite(double output) {
+			rd.arcadeDrive(output, -gyro.getAngle()/45);
+			System.out.println(output);
+		}
+		
+	}
+	
+	private class OutputTurn implements PIDOutput{
+
+		private DifferentialDrive rd;
+		
+		public OutputTurn(DifferentialDrive rd) {
+			this.rd = rd;
+		}
+		
+		@Override
+		public void pidWrite(double output) {
+			rd.arcadeDrive(0, output);
+			System.out.println(output);
+		}
+		
 	}
 }
