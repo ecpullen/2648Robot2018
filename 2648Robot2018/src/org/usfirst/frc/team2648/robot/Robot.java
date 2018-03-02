@@ -14,14 +14,18 @@ import edu.wpi.first.wpilibj.Compressor;
 import edu.wpi.first.wpilibj.DigitalInput;
 import edu.wpi.first.wpilibj.DoubleSolenoid;
 import edu.wpi.first.wpilibj.DoubleSolenoid.Value;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.GenericHID.Hand;
+import edu.wpi.first.wpilibj.GenericHID.RumbleType;
 import edu.wpi.first.wpilibj.IterativeRobot;
 import edu.wpi.first.wpilibj.Joystick;
 import edu.wpi.first.wpilibj.PIDController;
 import edu.wpi.first.wpilibj.PIDOutput;
 import edu.wpi.first.wpilibj.SpeedControllerGroup;
+import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.drive.DifferentialDrive;
+import edu.wpi.first.wpilibj.hal.PDPJNI;
 import edu.wpi.first.wpilibj.interfaces.Gyro;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -35,14 +39,15 @@ import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
  */
 public class Robot extends IterativeRobot {
 	private static final String kDefaultAuto = "Default";
-	private static final String kCustomAuto = "My Auto";
+	private static final String kLeftAuto = "Left";
+	private static final String kRightAuto = "Right";
 	private String m_autoSelected;
 	private SendableChooser<String> m_chooser = new SendableChooser<>();
 	private Encoder left,right;// Encoder used for drive train
 	private WPI_TalonSRX fleft,rleft,fright,rright;//drive train motor controlers
 	private SpeedControllerGroup sleft,sright;//controler groups for drive train
 	private DifferentialDrive rd;//drive train
-	private Joystick js1,js2;//control joysticks
+	private XboxController js1,js2;//control joysticks
 	private WPI_TalonSRX iright,ileft;//intake speed controlers
 	private Compressor comp;//compressor
 	private DoubleSolenoid dt,it;//intake and drive train numatics
@@ -53,7 +58,7 @@ public class Robot extends IterativeRobot {
 	private WPI_TalonSRX elefttop, eleftbot, erighttop, erightbot;
 	private SpeedControllerGroup elevatorLeft, elevatorRight;
 	private WPI_TalonSRX cleft,cright;
-	private DigitalInput hallEffect;
+	private DigitalInput hallEffect, ebottom, etop;
 	private PIDController drive,turn;
 	/**
 	 * This function is run when the robot is first started up and should be
@@ -61,21 +66,24 @@ public class Robot extends IterativeRobot {
 	 */
 	@Override
 	public void robotInit() {
-		
+		m_chooser.addDefault("Default Auto", kDefaultAuto);
+		m_chooser.addObject("Left", kLeftAuto);
+		m_chooser.addObject("Right", kRightAuto);
+		SmartDashboard.putData("Auto choices", m_chooser);
 		fleft = new WPI_TalonSRX (60);
 		rleft = new WPI_TalonSRX (11);
 		fright = new WPI_TalonSRX (25);
 		rright = new WPI_TalonSRX (32);//creates all 4 drive train motors
 		sleft = new SpeedControllerGroup (fleft,rleft);
-		sright = new SpeedControllerGroup (fright,rright);//makes the speed controler groups
+		sright = new SpeedControllerGroup (fright,rright);//makes the speed controller groups
 		rd = new DifferentialDrive (sleft,sright);//creating drive train
-		js1 = new Joystick (0);
-		js2 = new Joystick (1);//creating joysticks
+		js1 = new XboxController(0);
+		js2 = new XboxController(1);//creating joysticks
 		iright = new WPI_TalonSRX (45);
-		ileft = new WPI_TalonSRX (28);//creates the 2 intake motor controlers
+		ileft = new WPI_TalonSRX (28);//creates the 2 intake motor controllers
 		comp = new Compressor ();//creates the compressor
 		dt = new DoubleSolenoid (0,1);
-		it = new DoubleSolenoid (2,3);//creates the doulbe solenoids
+		it = new DoubleSolenoid (2,3);//creates the double solenoids
 		high = false;// set high
 		
 		left = new Encoder (2,3);
@@ -95,6 +103,8 @@ public class Robot extends IterativeRobot {
 		cright = new WPI_TalonSRX(12);
 		
 		hallEffect = new DigitalInput(4);
+		ebottom = new DigitalInput(5);
+		etop = new DigitalInput(6);
 		
 		drive = new PIDController(.45,.00,.001,left,new OutputDrive(rd, gyro));
 		turn = new PIDController(.1,.00000,0,gyro,new OutputTurn(rd));
@@ -118,75 +128,255 @@ public class Robot extends IterativeRobot {
 	 * the switch structure below with additional strings. If using the
 	 * SendableChooser make sure to add them to the chooser code above as well.
 	 */
+	String key;
 	@Override
 	public void autonomousInit() {
-		//m_autoSelected = m_chooser.getSelected();
+		m_autoSelected = m_chooser.getSelected();
 		// autoSelected = SmartDashboard.getString("Auto Selector",
-		// defaultAuto);
+		// defaultAuto)
 		left.reset();
 		right.reset();
 		gyro.reset();//resets the gyro and the encoders
 		//System.out.println("Auto selected: " + m_autoSelected);
-		drive.setSetpoint(60);
+		
 		drive.setPercentTolerance(5);
-		drive.setOutputRange(-.75, .75);
+		drive.setOutputRange(-1, 1);
 		drive.enable();
-		turn.setSetpoint(90);
 		turn.setPercentTolerance(2);
 		turn.setOutputRange(-.75, .75);
 		//turn.enable();
+		dt.set(Value.kForward);
 	}
 
 	/**
 	 * This function is called periodically during autonomous.
 	 */
 	int c = 0;
+	int c2 = 0;
 	@Override
 	public void autonomousPeriodic() {
-		System.out.println(gyro.getAngle());
-		//System.out.println();
-		if(c == 0 && drive.isEnabled() && drive.getError()<2) {
+		if(key == null) {
+			key = DriverStation.getInstance().getGameSpecificMessage();
+		}
+		else {
+			if(m_autoSelected.equals(kRightAuto)) {//selects which auto the robot does
+				autoRight(key);
+			}
+			if(m_autoSelected.equals(kLeftAuto)) {//selects which auto the robot does
+				autoLeft(key);
+			}
+			if(m_autoSelected.equals(kDefaultAuto)) {
+				autoDefault(key);
+			}
+		}
+	}
+	
+	public void autoLeft(String s) {
+		System.out.println(s);
+		if(s.charAt(1)=='l') {
+			autoscaleRight(false);
+			System.out.println("Scale");
+		}
+		else if (s.charAt(2)=='l') {
+			autoSwitchRight(false);
+			System.out.println("Switch");
+		}
+		else {
+			autolineDrive();
+			System.out.println("AutoLineDrive");
+		}
+	}
+	
+	public void autoscaleRight(boolean right) {
+		int i = right ? 1 : -1;
+		System.out.println("c "+c);
+		if(c == 0) {
+			dt.set(Value.kReverse);// sets motors to high gear
+			drive.reset();//resets drive pids
+			left.reset();
+			drive.setSetpoint(450);//drives robot forward 450 inches
+			drive.enable();//sets drive pid
+			c++;//increases c by 1
+		}
+		if(c == 1 && drive.isEnabled() && drive.getError()<2) {
+			drive.disable();
+			turn.setSetpoint(-i*30);//turns robot after going forwards
+			turn.enable();//sets turn pid
+			c++;//increases c by 1
+		}
+		if(c==2&&Math.abs(turn.getError())<5) {
+			turn.disable();
+		}
+		if(c  == 2&&etop.get()&&!turn.isEnabled()) {// if c = 2 and the elevator is not at the top it moves the elevator up
+			elevate(-1);//moves elevator up
+			it.set(Value.kReverse);//toggles intake numatics
+		}
+		if(c == 2&&!etop.get()) {//if c = 2 and elevator is not at the top it does not move the elevator
+			elevate(0);// does not move elevator
+			c++;
+		}
+		if (c == 3) {//if c = 3 the claw pushes out the cube
+			cleft.set(-1);
+			cright.set(1);//makes claw go out
+			c2++;
+		}
+		if(c==3&&c2==60) {
+			cleft.set(0);//resets claw
+			cright.set(0);
+			elevate(1);//brings elevator back down
+			c++;
+		}
+		if(c==4&&!ebottom.get()) {//if c=4 and elevator is not on the bottom then the elevator does not move
+			elevate(0);
+			c++;
+		}
+		if(c==5) {
+			gyro.reset();//resets gyro
+			turn.reset();
+			turn.setSetpoint(-i*110);//turns robot
+			turn.enable();
+			c++;
+		
+		}
+		if(c==6&&turn.getError()<5) {
+			turn.disable();
+			c++;
+		}
+	}
+	public void autoSwitchRight(boolean right) {
+		int i = right ? 1 : -1;
+		if(c == 0) {
+			dt.set(Value.kReverse);// sets motors to high gear
+			drive.reset();//resets drive pins
+			left.reset();
+			drive.setSetpoint(170);//drives robot forward 160 inches
+			drive.enable();//sets turn pin
+			c++;//increases c by 1
+		}
+		if(c == 1 && drive.isEnabled() && drive.getError()<2) {
+			drive.disable();
+			turn.setSetpoint(-i*30);//turns robot after going forwards
+			turn.enable();//sets turn pin
+			c++;//increases c by 1
+		}
+		if(c==2&&Math.abs(turn.getError())<5) {
+			turn.disable();
+		}
+		if (c == 2&&!turn.isEnabled()) {//if c = 2 the claw pushes out the cube
+			cleft.set(-1);
+			cright.set(1);//makes claw go out
+			c2++;
+		}
+		if(c==2&&c2==60) {
+			cleft.set(0);//resets claw
+			cright.set(0);
+			elevate(1);//brings elevator back down
+			c++;
+		}
+		if(c==3&&!ebottom.get()) {//if c=3 and elevator is on the bottom then the elevator does not move
+			elevate(0);
+			c++;
+		}
+	}
+	public void autoRight (String s) {//s tells us which scales are ours
+		System.out.println(s);
+		if(s.charAt(1)=='r') {
+			autoscaleRight(true);
+			System.out.println("Scale");
+		}
+		else if (s.charAt(2)=='r') {
+			autoSwitchRight(true);
+			System.out.println("Switch");
+		}
+		else {
+			autolineDrive();
+			System.out.println("AutoLineDrive");
+		}
+	}
+	public void autolineDrive() {
+		if(c == 0) {
+			drive.setSetpoint(30);
+			c++;
+		}
+		if(c == 1 && drive.isEnabled() && drive.getError()<5) {
 			System.out.println("1");
 			drive.disable();
+			it.set(Value.kReverse);
+			elevate(1);
+			c++;
+		}
+		if(c == 2 && !ebottom.get()) {
+			elevate(0);
+		}
+		
+	}
+	public void autoDefault(String key) {
+		int i = key.charAt(0)=='r' ? 1 : -1;       
+		if(c == 0) {
+			drive.setSetpoint(30);
+			c++;
+		}
+		if(c == 1 && drive.isEnabled() && drive.getError()<5) {
+			System.out.println("1");
+			drive.disable();
+			turn.setSetpoint(i*60);
 			turn.enable();
 			c++;
 		}
-		if(c == 1 && turn.isEnabled() && turn.getError()<5) {
+		if(c == 2 && turn.isEnabled() && turn.getError()<5) {
 			System.out.println("2");
 			turn.disable();
+			gyro.reset();
 			left.reset();
 			drive.reset();
-			drive.setSetpoint(60);
+			drive.setSetpoint(66);
 			drive.enable();
 			c++;
 		}
-		if(c == 2 && drive.isEnabled() && drive.getError()<5) {
+		if(c == 3 && drive.isEnabled() && drive.getError()<2) {
 			System.out.println("3");
 			drive.disable();
+			gyro.reset();
 			turn.reset();
-			turn.setSetpoint(-90);
+			turn.setSetpoint(-i*60);
 			turn.enable();
 			c++;
 		}
-		if(c == 3 && turn.isEnabled() && turn.getError()<5) {
+		if(c == 4 && turn.isEnabled() && Math.abs(turn.getError())<5) {
 			System.out.println(4);
 			turn.disable();
+			gyro.reset();
 			left.reset();
 			drive.reset();
-			drive.setSetpoint(60);
+			drive.setSetpoint(56);
 			drive.enable();
 			c++;
 		}
-		if(c == 4 && drive.isEnabled() && drive.getError()<5) {
+		if(c == 5 && drive.isEnabled() && drive.getError()<2) {
 			System.out.println("3");
+			gyro.reset();
 			drive.disable();
-			cleft.set(-1);
-			cright.set(1);
+			
+		}
+		if(c == 5) {
+			if(c2 < 60)
+				c2++;
+			else {
+				c2 = 0;
+				cleft.set(-.75);
+				cright.set(.75);
+				c++;
+			}
+		}
+		if(c == 6 && c2 > 60) {
+			cleft.set(0);
+			cright.set(0);
+			c++;
 		}
 		
 		System.out.println("c " + c);
-		
 	}
+	
 	@Override
 	public void  disabledInit() {
 		super.disabledInit();
@@ -200,15 +390,15 @@ public class Robot extends IterativeRobot {
 	public void teleopPeriodic() {
 		//rd.arcadeDrive(-js1.getY(Hand.kLeft), js1.getX(Hand.kLeft));// lets opperator control the drive train
 		arcadeDrive();
-		if (js2.getRawButton(6)) {//if button 6 is pressed the intake pulles in, 7 is pressed intake pushes out
-			ileft.set(1);
-			iright.set(-1);
+		if (js2.getRawButton(6) || js1.getRawButton(6)) {//if button 6 is pressed the intake pulls in, 5 is pressed intake pushes out
+			ileft.set(.85);
+			iright.set(-.85);
 			cleft.set(-1);
 			cright.set(1);
 		}
-		else if (js2.getRawButton(5)) {
-			ileft.set(-1);
-			iright.set(1);
+		else if (js2.getRawButton(5) || js1.getRawButton(5)) {
+			ileft.set(-.85);
+			iright.set(.85);
 			cleft.set(1);
 			cright.set(-1);
 		}
@@ -230,23 +420,16 @@ public class Robot extends IterativeRobot {
 		if (js1.getRawButton(4)) {
 			dt.set(Value.kReverse);
 		}
-		//System.out.println(left.getRate());
-		//System.out.println(right.getRate());//gives encoder vaulues to drivers station
-		/*if(Math.abs(left.getRate())<60) {
-			//if(dt.get().equals(Value.kForward)) {
-				dt.set(Value.kReverse);
-			System.out.println("Shift");
-		}
-		if(Math.abs(left.getRate()) > 70) {
-			if(dt.get().equals(Value.kReverse))
-				dt.set(Value.kForward);
-			System.out.println("Shift down");
-		}*/
-		System.out.println(left.getRate());
-		//System.out.println(hallEffect.get());
-		//if(js2.getRawButton(7))
-			//e.reset();
-		elevate(js2.getRawAxis(5));
+		
+		//if(PDPJNI.getPDPTotalCurrent(7)>10)
+		//	js2.setRumble(RumbleType.kLeftRumble, .25);
+		System.out.println(etop.get() +" "+ ebottom.get());
+		if(etop.get() && (js2.getRawAxis(5)<-.3))
+			elevate(-1);
+		else if(ebottom.get() && (js2.getRawAxis(5)>.3))
+			elevate(1);
+		else
+			elevate(0);
 	}
 
 	/** 
@@ -270,7 +453,7 @@ public class Robot extends IterativeRobot {
 			}
 			else
 				pSpeed = 0;
-			rd.arcadeDrive(-pSpeed, js1.getX(Hand.kRight)*.75);
+			rd.arcadeDrive(-pSpeed, js1.getX(Hand.kLeft)*.85);
 		}
 		else {
 			pow *= -1;
@@ -285,7 +468,8 @@ public class Robot extends IterativeRobot {
 			}
 			else
 				pSpeed = 0;
-			rd.arcadeDrive(pSpeed, js1.getX(Hand.kRight)*.75);
+			
+			rd.arcadeDrive(pSpeed, js1.getX(Hand.kLeft)*.85);
 		}
 	}
 	public void elevate(double output) {
@@ -306,7 +490,7 @@ public class Robot extends IterativeRobot {
 		
 		@Override
 		public void pidWrite(double output) {
-			rd.arcadeDrive(output, -gyro.getAngle()/45);
+			rd.arcadeDrive(output, -.3-gyro.getAngle()/10);
 			System.out.println(output);
 		}
 		
