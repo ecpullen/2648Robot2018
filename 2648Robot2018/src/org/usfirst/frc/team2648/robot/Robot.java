@@ -56,7 +56,6 @@ public class Robot extends IterativeRobot {
 	private ADXRS450_Gyro gyro;//gyro
 	private double pSpeed = 0;
 	private WPI_TalonSRX elefttop, eleftbot, erighttop, erightbot;
-	private SpeedControllerGroup elevatorLeft, elevatorRight;
 	private WPI_TalonSRX cleft,cright;
 	private DigitalInput hallEffect, ebottom, etop;
 	private PIDController drive,turn;
@@ -93,7 +92,8 @@ public class Robot extends IterativeRobot {
 		comp.start();//starts compressor
 		e = new Encoder (8,9);//adds elevator encoder
 		gyro = new ADXRS450_Gyro();//adds gyro
-		
+		e.setDistancePerPulse(.0175);
+		e.setReverseDirection(false);
 		elefttop = new WPI_TalonSRX(27);
 		eleftbot = new WPI_TalonSRX(56); 
 		erighttop = new WPI_TalonSRX(8);
@@ -155,7 +155,7 @@ public class Robot extends IterativeRobot {
 	int c2 = 0;
 	@Override
 	public void autonomousPeriodic() {
-		if(key == null) {
+		if(key.length() != 3) {
 			key = DriverStation.getInstance().getGameSpecificMessage();
 		}
 		else {
@@ -399,8 +399,12 @@ public class Robot extends IterativeRobot {
 		else if (js2.getRawButton(5) || js1.getRawButton(5)) {
 			ileft.set(-.85);
 			iright.set(.85);
-			cleft.set(1);
-			cright.set(-1);
+			cleft.set(.8);
+			cright.set(-.8);
+		}
+		else if(js2.getRawButton(4)) {
+			cleft.set(-.6);
+			cright.set(.6);
 		}
 		else {//if button 6 or 7 is not pressed the intake is at neutral
 			ileft.set(0);
@@ -423,13 +427,20 @@ public class Robot extends IterativeRobot {
 		
 		//if(PDPJNI.getPDPTotalCurrent(7)>10)
 		//	js2.setRumble(RumbleType.kLeftRumble, .25);
-		System.out.println(etop.get() +" "+ ebottom.get());
+		//System.out.println(etop.get() +" "+ ebottom.get());
+		//System.out.println(e.getDistance());
 		if(etop.get() && (js2.getRawAxis(5)<-.3))
 			elevate(-1);
 		else if(ebottom.get() && (js2.getRawAxis(5)>.3))
 			elevate(1);
 		else
 			elevate(0);
+		
+		if(!ebottom.get())
+			e.reset();
+		
+
+		System.out.println("rate " + e.getRate());
 	}
 
 	/** 
@@ -472,12 +483,70 @@ public class Robot extends IterativeRobot {
 			rd.arcadeDrive(pSpeed, js1.getX(Hand.kLeft)*.85);
 		}
 	}
+	
+	private double ePSpeed = 0;//stores the previous power of the elevator.
+	private static final double kRAMP = .05; //increase this to speed up the elevator.
+	
 	public void elevate(double output) {
-		elefttop.set(-output);
-		eleftbot.set(output);
-		erighttop.set(-output);
-		erightbot.set(-output); 
+		if(output == 0) {
+			setElevate(0);
+			return;
+		}
+		if(ePSpeed*output<0) {
+			ePSpeed = output/100;
+		}
+		if(ePSpeed > 0) {
+			if(Math.max(ePSpeed, output) == ePSpeed) {
+				ePSpeed = output;
+			}
+			else {
+				ePSpeed += kRAMP;
+			}
+		}
+		else {
+			if(Math.min(ePSpeed, output) == ePSpeed) {
+				ePSpeed = output;
+			}
+			else {	
+				ePSpeed -= kRAMP;
+			}
+		}
+		if(ePSpeed>1)
+			ePSpeed = 1;
+		if(ePSpeed<-1)
+			ePSpeed = -1;
+		
+		//setElevate(ePSpeed);
+		setElevate(ePSpeed);
 	}
+	
+	private double pScale = 0;//amount scaled down by.
+	private static final double kACCEL = 2.5;//calculate as (max_velocity - final_velocity)/(stop_distance)
+	
+	public void decel(double output) {
+		if(e.getDistance()>72 && output > 0) {
+			if(e.getRate() > 40-kACCEL*(e.getDistance()-72)) {
+				pScale -= .1;
+				
+			}
+			System.out.println("pScale " + pScale);
+		}
+		if(e.getDistance()<12 && output < 0) {
+			if(e.getRate() < -40+kACCEL*(12-e.getDistance())) {
+				pScale += .1;
+			}
+		}
+		//System.out.println(pScale);
+		setElevate(output + pScale);
+	}
+	
+	public void setElevate(double output) {
+		elefttop.set(output);
+		eleftbot.set(-output);
+		//erighttop.set(-output);
+		//erightbot.set(-output); 
+	}
+	
 	private class OutputDrive implements PIDOutput{
 
 		private DifferentialDrive rd;
